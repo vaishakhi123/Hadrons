@@ -40,11 +40,16 @@ See the full license in the file "LICENSE" in the top level distribution directo
 #include <Hadrons/Modules/MSource/Point.hpp>
 #include <Hadrons/Solver.hpp>
 #include <Grid/lattice/Lattice_reduction.h>
+#include <Grid/Grid.h>
+#include <Grid/algorithms/iterative/BlockConjugateGradient.h>
+#include <utility>
+#include <Hadrons/Modules/MSolver/Guesser.hpp>
+
 
 BEGIN_HADRONS_NAMESPACE
 
 /******************************************************************************
- *             TMesonLoopCCHL                                    *
+ *             TMesonLoopCCHL  -split grid version                             *
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MContraction)
 
@@ -56,12 +61,19 @@ public:
                                     std::string, gauge,
                                     std::string, output,
                                     std::string, eigenPack,
-                                    std::string, solver,
                                     std::string, action,
                                     double, mass,
-                                    int, numHits,
-                                    int, blockSize,
-                                    int, tinc);
+                                    std::string, solver,
+                                    unsigned int, maxIteration,
+                                    double      , residual,
+                                    double     , c1,
+                                    double     , tad,
+                                    bool, solInitGuess , //subguess - true for making guess solution
+                                    bool, subGuess , //subguess - true for subtract
+                                    int, tinc,
+                                    int, block,
+                                    int, hits,
+                                    std::string, mpi_split);
 };
 
 template <typename FImpl1, typename FImpl2>
@@ -97,6 +109,8 @@ public:
       struct stat buffer;
       return (stat (name.c_str(), &buffer) == 0);
     }
+    
+
 private:
     //FMat         *action_{nullptr};
     //Solver       *solver_{nullptr};
@@ -139,26 +153,43 @@ std::vector<std::string> TStagMesonLoopCCHL<FImpl1, FImpl2>::getOutput(void)
 template <typename FImpl1, typename FImpl2>
 void TStagMesonLoopCCHL<FImpl1, FImpl2>::setup(void)
 {
+    //Grid_init(&argc,&argv);
+
+    
+
+    
+    
+
     
     auto        &action     = envGet(FMat, par().action);
+    //auto        &solver     = envGet(Solver, par().solver + "_subtract");
     auto        &solver     = envGet(Solver, par().solver);
     envTmp(A2A, "a2a", 1, action, solver);
     
-    envTmpLat(FermionField, "srcb");
-    envTmpLat(FermionField, "snkb");
-    envTmpLat(FermionField, "sub");
-    envTmpLat(FermionField, "tmp");
+    envTmpLat(FermionField, "source");
+    
+    envTmpLat(FermionField, "sink");
+    envTmpLat(FermionField, "tmp1");
     envTmpLat(FermionField, "tmp2");
     envTmpLat(FermionField, "sol");
     envTmpLat(FermionField, "solshift");
+    envTmpLat(FermionField, "sourceshift");
     envTmpLat(FermionField, "w");
+    envTmpLat(LatticeComplex, "eta");
 }
 
 // execution ///////////////////////////////////////////////////////////////////
 template <typename FImpl1, typename FImpl2>
 void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
 {
-    LOG(Message) << "Computing High-Low Conserved Current Stag meson contractions " << std::endl;
+
+    Coordinate latt_size   = GridDefaultLatt();
+    Coordinate simd_layout = GridDefaultSimd(Nd,vComplex::Nsimd());
+    Coordinate mpi_layout  = GridDefaultMpi();
+    //Coordinate mpi_split (mpi_layout.size(),1);
+    
+
+    LOG(Message) << "Computing High-Low Conserved Current Stag-meson contractions " << std::endl;
 
     std::vector<ComplexD>  corr;
     std::vector<Result> result(3);
@@ -171,20 +202,63 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
             result[mu].corr[t]=(ComplexD)(0.,0.);
         }
     }
+    
+    
 
     auto &U       = envGet(LatticeGaugeField, par().gauge);
     auto        &action      = envGet(FMat, par().action);
     //auto        &solver    = envGet(Solver, par().solver + "_subtract");
     auto        &solver    = envGet(Solver, par().solver);
     auto &epack   = envGet(BaseFermionEigenPack<FImpl1>, par().eigenPack);
+    
     double mass = par().mass;
+    int block = par().block;
+    int hits = par().hits;
+    
+    double c1 = par().c1;
+    double tad = par().tad;
+    
+    
+    LOG(Message) << "test" << std::endl;
+    std::istringstream iss(par().mpi_split);
+    
+    // Vector to store the integers
+    std::vector<int> mpi_split;
+    
+    // Temporary variable to hold each integer
+    int temp;
+    
+    // Read integers from the string stream
+    while (iss >> temp) {
+        // Add the integer to the vector
+        mpi_split.push_back(temp);
+    }
+    
     std::vector<double> mlsq(epack.eval.size());
     for(int i=0;i<epack.eval.size();i++){
         mlsq[i]=(epack.eval[i]-mass*mass) * mass;
     }
+    LOG(Message) << "split_layout" << mpi_split << std::endl;
+    LOG(Message) << "mpi_layout" << mpi_layout << std::endl;
+    int nrhs = 1;
+    for(int i=0;i<mpi_layout.size();i++){ 
+        nrhs *= (mpi_layout[i]/mpi_split[i]);
+        LOG(Message) << "nrhs" << nrhs << std::endl;
+    }
+    typedef DeflatedGuesser<FermionField>  Guesser;
+    // for solution
+    Guesser LMA(epack.evec, epack.eval);
+
     DeflatedGuesser<FermionField> LLsub(epack.evec, mlsq);
+    
+    typedef DeflatedGuesser<FermionField>   FineGuesser;
+    //auto guesserPt = std::make_shared<DeflatedGuesser>(epack.evec, epack.eval);
+    std::shared_ptr<LinearFunction<FermionField>> guesserPt(new  FineGuesser(epack.evec, epack.eval));
+    
     FermionField tmp_e(env().getRbGrid());
     FermionField tmp_o(env().getRbGrid());
+    FermionField tmpRB(env().getRbGrid());
+    FermionField tmpRB2(env().getRbGrid());
 
     envGetTmp(A2A, a2a);
     
@@ -197,43 +271,44 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
     Lattice<iScalar<vInteger>> lin_t(U.Grid()); lin_t=x+y+z;
     LatticeComplex phases(U.Grid());
     std::vector<LatticeColourMatrix> Umu(3,U.Grid());
-    // source, solution
-    envGetTmp(FermionField, srcb);
-    envGetTmp(FermionField, snkb);
-    envGetTmp(FermionField, tmp);
-    envGetTmp(FermionField, tmp2);
-    envGetTmp(FermionField, sol);
-    envGetTmp(FermionField, solshift);
-    envGetTmp(FermionField, sub);
-    envGetTmp(FermionField, w);
-    
-    std::string outFileName;
-    int Nl_ = epack.evec.size();
 
-    // save randoms so exact and sub use same
-    std::vector<Complex> eta(nt*3*par().numHits*Nl_*2);
-    int numb=2*Nl_/par().blockSize;
-    for(int ts=0; ts<nt;ts++){
-        for(int mu=0;mu<3;mu++){
-            for(int ih=0;ih<par().numHits;ih++){
-                for (unsigned int ib = 0; ib < numb; ib++){
-                    
-                    for(int il=0;il<par().blockSize;il++){
-                        int idx=il+par().blockSize*(ib+numb*(ih+par().numHits*(mu+3*ts)));
-                        bernoulli(rngSerial(), eta[idx]);
-                        Complex shift(1., 1.);
-                        eta[idx] = (2.*eta[idx] - shift)*(1./::sqrt(2.));
-//                        LOG(Message) << "il " << il << std::endl;
-//                        LOG(Message) << "ib " << ib << std::endl;
-//                        LOG(Message) << "ih " << ih << std::endl;
-//                        LOG(Message) << "mu " << mu << std::endl;
-//                        LOG(Message) << "ts " << ts << std::endl;
-//                        LOG(Message) << "eta idx " << idx << std::endl;
-                    }
-                }
-            }
-        }
+    // source, solution
+    envGetTmp(FermionField, source);
+    envGetTmp(FermionField, sink);
+    envGetTmp(FermionField, sol);
+    envGetTmp(FermionField, tmp1);
+    envGetTmp(FermionField, tmp2);
+    envGetTmp(FermionField, solshift);
+    envGetTmp(FermionField, sourceshift);
+    envGetTmp(FermionField, w);
+
+    std::vector<FermionField>    TMP(nrhs,env().getGrid());
+    std::vector<FermionField>    TMP2(nrhs,env().getGrid());
+    
+    std::vector<FermionField>    Sink(nrhs,env().getGrid());
+    std::vector<FermionField>    SOL(nrhs,env().getGrid());
+    std::vector<FermionField>    SOL2(nrhs,env().getGrid());
+    for(int s=0;s<nrhs;s++){ 
+        SOL[s]=Zero();
+        SOL2[s] =Zero();
     }
+    std::string outFileName;
+    std::vector<std::vector<std::vector<ComplexD>>> all_results(3, 
+        std::vector<std::vector<ComplexD>>(hits,
+            std::vector<ComplexD>(nt, ComplexD(0., 0.))));
+
+    
+    
+    GridCartesian         * UGrid   = env().getGrid();
+    GridRedBlackCartesian         * RBGrid   = env().getRbGrid();
+
+    GridCartesian * SGrid = new GridCartesian(GridDefaultLatt(),GridDefaultSimd(Nd,vComplex::Nsimd()),mpi_split,* UGrid ); 
+    GridRedBlackCartesian * SrbGrid  = SpaceTimeGrid::makeFourDimRedBlackGrid(SGrid); 
+    //new GridCartesian(GridDefaultLatt(),GridDefaultSimd(Nd,vComplex::Nsimd()),mpi_split,* RbGrid ); 
+
+
+
+    
     for(int mu=0;mu<3;mu++){
 
         //staggered phases go into links
@@ -250,142 +325,296 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
         Umu[mu] *= phases;
     }
 
-    // loop over source time slices
-    for(int mu=0;mu<3;mu++){
-        
-        // check if we already did this mu
-        std::string file = par().output+"HLcc_2pt_mu"+std::to_string(mu);
-        file = resultFilename(file,"h5");
-        bool f1 = exists(file);
-        std::cout<< file << std::endl;
-        if(f1){
-            std::cout << "Skipping mu " << mu << std::endl;
-            continue;
-        }
+    int Nl_ = epack.evec.size();
+    Complex shift(1., 1.);
+    
+    std::vector<std::vector<std::vector<std::vector<ComplexD>>>> randomEtas(nt, std::vector<std::vector<std::vector<ComplexD>>>(3, std::vector<std::vector<ComplexD>>(Nl_, std::vector<ComplexD>(block * 2))));
 
-        LOG(Message) << "StagMesonLoopCCHL src_mu " << mu << std::endl;
-        
-        for(int ts=0; ts<nt;ts+=par().tinc){
-        
-            LOG(Message) << "StagMesonLoopCCHL src_t " << ts << std::endl;
-
-            // loop over hits
-            for(int ih=0;ih<par().numHits;ih++){
-                
-                LOG(Message) << "StagMesonLoopCCHL hit " << ih << std::endl;
-                
-                // loop over blocks of evecs
-                for (unsigned int ib = 0; ib < numb; ib++){
-                    
-                    // sum evecs over block
-                    srcb = 0.;
-                    snkb = 0.;
-                    for(int il=0;il<par().blockSize;il++){
-                        
-                        int ivec = il+ib*par().blockSize;
-                        int idx=il+par().blockSize*(ib+numb*(ih+par().numHits*(mu+3*ts)));
-                        eta[idx] /= pow(epack.eval[ivec/2], 0.25);
-                    
-                        std::complex<double> eval(mass,sqrt(epack.eval[ivec/2]-mass*mass));
-                        double arg=std::arg(eval);
-                        std::complex<double> phase(cos(arg),sin(arg));
-                        
-                        // do plus/minus evecs
-                        int pm = ivec%2;
-                        
-                        // construct full lattice evec as 4d source (no 1/lambda here)
-                        a2a.makeLowModeW(w, epack.evec[ivec/2], eval, pm);
-                        
-                        // -lambda eigenvalue
-                        if(pm){
-                            phase=conjugate(phase);
-                        }
-                        // source and sink block vectors
-                        w *= eta[idx];
-                        snkb += w;
-                        w *= 1./phase;
-                        srcb += w;
-                    }
-                    // split grid here?
-                    
-                    tmp = where(t == ts, srcb, srcb*0.);
-                    tmp2 = adj(Umu[mu]) * tmp;
-                   
-                    // shift source at x to x+mu
-                    tmp = Cshift(tmp2, mu, -1);
-                    
-                    solver(sol, tmp);
-                    // subtract the low modes
-                    sub = Zero();
-                    pickCheckerboard(Even,tmp_e,tmp);
-                    action.Meooe(tmp_e,tmp_o);
-                    LLsub(tmp_o,tmp_e);
-                    action.Meooe(tmp_e,tmp_o);// tmp_o is now even
-                    setCheckerboard(sub,tmp_o);
-                    sol += sub;
-                    // take inner-product with eigenbra on all time slices
-                    tmp = Cshift(snkb, mu, 1);
-                    tmp2 = Umu[mu] * tmp;
-                    sliceInnerProductVector(corr,tmp2,sol,3);
-                    for(int tsnk=0; tsnk<nt; tsnk++){
-                        ComplexD cc = corr[tsnk];
-                        result[mu].corr[(tsnk-ts+nt)%nt] += cc;
-                    }
-                    
-                    solshift=Cshift(sol, mu, 1);
-                    // take inner-product with eigenbra on all time slices
-                    tmp = adj(Umu[mu]) * snkb;
-                    sliceInnerProductVector(corr,tmp,solshift,3);
-                    for(int tsnk=0; tsnk<nt; tsnk++){
-                        ComplexD cc = corr[tsnk];
-                        result[mu].corr[(tsnk-ts+nt)%nt] += cc;
-                    }
-
-                    tmp = where(t == ts, srcb, srcb*0.);
-                    // shift source
-                    tmp2 = Cshift(tmp, mu, 1);
-                    tmp = Umu[mu] * tmp2;
-
-                    solver(sol, tmp);
-                    sub = Zero();
-                    pickCheckerboard(Even,tmp_e,tmp);
-                    action.Meooe(tmp_e,tmp_o);
-                    LLsub(tmp_o,tmp_e);
-                    action.Meooe(tmp_e,tmp_o);// tmp_o is now even
-                    setCheckerboard(sub,tmp_o);
-                    sol += sub;
-                    
-                    // take inner-product with eigenmode on all time slices
-                    tmp = Cshift(snkb, mu, 1);
-                    tmp2 = Umu[mu] * tmp;
-                    sliceInnerProductVector(corr,tmp2,sol,3);
-                    for(int tsnk=0; tsnk<nt; tsnk++){
-                        ComplexD cc = corr[tsnk];
-                        result[mu].corr[(tsnk-ts+nt)%nt] += cc;
-                    }
-
-                    solshift=Cshift(sol, mu, 1);
-                    // take inner-product with eigenmode on all time slices
-                    tmp = adj(Umu[mu]) * snkb;
-                    sliceInnerProductVector(corr,tmp,solshift,3);
-                    for(int tsnk=0; tsnk<nt; tsnk++){
-                        ComplexD cc = corr[tsnk];
-                        result[mu].corr[(tsnk-ts+nt)%nt] += cc;
+    // Precompute and store random numbers for eta for all time slices, mu, and eigenvectors
+    for(int ts = 0; ts < nt; ts++){
+        for(int mu = 0; mu < 3; mu++){
+            for(unsigned int il = 0; il < Nl_; il += block){
+                for(int iv = il; iv < il + block; iv++){
+                    for(int pm = 0; pm < 2; pm++){
+                        ComplexD eta;
+                        bernoulli(rngSerial(), eta);
+                        // Store the precomputed random number in the data structure
+                        randomEtas[ts][mu][iv][pm] = eta;
                     }
                 }
             }
         }
-        if(U.Grid()->IsBoss()){
-            makeFileDir(par().output);
-            outFileName = par().output+"HLcc_2pt_mu"+std::to_string(mu);
-            for(int t=0; t<nt; t++)
-                result[mu].corr[t] /= par().numHits;
-            saveResult(outFileName, "HLCC", result[mu]);
+    }
+    
+    int idx = 0.;
+    FermionField sub(env().getGrid());
+    std::vector<std::pair<int, int>> ts_mu_pairs;
+
+    // lopp over time slice
+    for(int ts=0; ts<nt;ts+=par().tinc){ //ss=split size
+        
+        
+        LOG(Message) << "StagMesonLoopCCHLHL src_t " << ts << std::endl;
+        //std::complex<double> eta = precomputedRandomNumbers[ts / par().tinc];
+        
+        // loop over directions
+        for(int mu=0;mu<3;mu++){
+
+            LOG(Message) << "StagMesonLoopCCHLHL src_mu " << mu << std::endl;
+            ts_mu_pairs.push_back({ts, mu});
+
+            // lopp over hits
+            LOG(Message) << "Total " << hits << "hits" <<std::endl;
+            for(int hit = 1; hit <= hits; hit++)
+            {
+                // loop over evecs
+                for (unsigned int il = 0; il < Nl_; il+=block)
+                {
+                    source = 0.0;
+                    sink = 0.0;
+
+                    //loop over blocks
+                    for(int iv=il;iv<il+block;iv++){
+            
+                        std::complex<double> eval(mass,sqrt(epack.eval[iv]-mass*mass));
+                        for(int pm=0;pm<2;pm++){
+                            LOG(Message) << "Eigenvector " << 2*iv+pm << std::endl;
+                            a2a.makeLowModeW(w, epack.evec[iv], eval, pm);
+                            if(pm){
+                                eval = conjugate(eval);
+                            }
+                            std::complex<double> iota_angle(0.0, std::arg(eval));
+                            //ComplexD eta;
+                            //bernoulli(rngSerial(), eta);
+		
+			                std::complex<double> eta = randomEtas[ts][mu][iv][pm];
+                            //LOG(Message) << "random number " << eta << "for ts"<< ts <<std::endl;
+			                eta = (2.*eta - shift)*(1./::sqrt(2.));
+                
+                            source += ((eta)*(std::exp(-iota_angle)/std::sqrt(std::abs(eval))))*w;
+                            sink += ((eta)*(1./std::sqrt(std::abs(eval))))*w;
+                        }
+                    } 
+                    
+                    tmp1 = where(t == ts, source, source*0.);
+                    tmp2 = adj(Umu[mu]) * tmp1;
+                    // shift source at x to x+mu
+                    tmp1 = Cshift(tmp2, mu, -1);
+                    sol = tmp1;
+                    
+                    pickCheckerboard(Even,tmp_e,sol);
+                    pickCheckerboard(Odd ,tmp_o,sol);
+                    
+                    //once the source on full grid is made, make the preconditioned source and solution, hit the                          guesser with the solution.
+                    LOG(Message) << GridLogMessage<< "make the preconditioned source"<<std::endl;
+                    /////////////////////////////////////////////////////
+                    // src_o = (source_o - Moe MeeInv source_e) pc
+                    /////////////////////////////////////////////////////
+                    action.MooeeInv(tmp_e,tmpRB);  assert( tmpRB.Checkerboard() ==Even);
+                    action.Meooe   (tmpRB,tmpRB2); assert( tmpRB2.Checkerboard() ==Odd);
+                    tmpRB2=tmp_o-tmpRB2;           assert( tmpRB2.Checkerboard() ==Odd);
+                    action.Mooee(tmpRB2,tmp_o);
+
+                    tmpRB2.Grid()->show_decomposition();
+                    //setCheckerboard(tmp1,tmpRB2);
+                    TMP[idx] = tmp1 ;
+                    
+                    LMA(tmp_o, tmpRB);
+                    setCheckerboard(sol,tmpRB);
+                    
+                    // zero out even part
+                    tmpRB2.Checkerboard()=Even;
+                    tmpRB2=Zero();
+                    setCheckerboard(sol,tmpRB2);
+
+                    SOL[idx] = sol;
+                    
+                    LOG(Message) << GridLogMessage<< "Guess sol made"<<std::endl;
+                    
+                    Sink[idx] = sink;
+                    LOG(Message) << GridLogMessage<< "nrhs sources prepared"<<std::endl;
+
+                    
+                    LatticeGaugeField s_U(SGrid);
+                    FermionField s_source(SGrid);
+                    FermionField s_tmp(SGrid);
+                    FermionField s_sol(SGrid);
+
+                    if ((idx+1)%nrhs ==0){ //block=16; so nrh should be 3*16 = 48
+
+                        s_sol= 0;
+                        LOG(Message) << GridLogMessage<< "split the grid"<<std::endl;
+                        Grid_split  (TMP,s_tmp);
+                        Grid_split  (SOL,s_sol);
+                        Grid_split  (U, s_U);
+                        
+                        // Fermionic matrix on split grid
+                        Grid::NaiveStaggeredFermionR Ds(s_U,*SGrid,*SrbGrid,mass,c1,tad);
+
+                        // CG on split grid
+                        ConjugateGradient<FermionField> CG(par().residual,par().maxIteration);
+                        HADRONS_DEFAULT_SCHUR_SOLVE<FermionField> schurSolver(CG,par().subGuess,par().solInitGuess); 
+                        schurSolver(Ds, s_tmp, s_sol, *guesserPt);
+                        
+                       
+    
+
+                        LOG(Message) << GridLogMessage<< "Unsplitting the result"<<std::endl;
+                        Grid_unsplit(SOL,s_sol);
+
+                        for (int s=0;s<nrhs;s++){
+
+                           
+                            int s_mu = ts_mu_pairs[s].second;
+                            int s_ts = ts_mu_pairs[s].first;
+                            
+                            // subtract the low modes
+                            sub = Zero();
+                            pickCheckerboard(Even,tmp_e,TMP[s]);
+                            action.Meooe(tmp_e,tmp_o);
+                            LLsub(tmp_o,tmp_e);
+                            action.Meooe(tmp_e,tmp_o);// tmp_o is now even
+                            setCheckerboard(sub,tmp_o);
+                            SOL[s] += sub;
+                    
+                
+                            // take inner-product with eigenbra on all time slices
+                            solshift = Cshift(SOL[s],s_mu,1);
+                            solshift = Umu[s_mu]*solshift;
+                            sliceInnerProductVector(corr,Sink[s],solshift,3); //first term
+
+                        
+                            for(int tsnk=0; tsnk<nt; tsnk++){
+                                result[s_mu].corr[(tsnk-s_ts+nt)%nt] += (corr[tsnk]);
+                            }
+                    
+                    
+                            sourceshift = Cshift(Sink[s],s_mu,1);
+                            sourceshift = Umu[s_mu]*sourceshift;
+                            sliceInnerProductVector(corr,sourceshift,SOL[s],3); //third term
+                    
+                            // take inner-product with eigenmode on all time slices
+                            for(int tsnk=0; tsnk<nt; tsnk++){
+                                result[s_mu].corr[(tsnk-s_ts+nt)%nt] += (corr[tsnk]);
+                            }
+                           
+                        }
+                        
+                    }
+
+                    tmp1 = where(t == ts, source, source*0.);
+                    // shift source
+                    tmp2 = Cshift(tmp1, mu, 1);
+                    tmp1 = Umu[mu] * tmp2;
+
+                    sol = tmp1;
+
+                    pickCheckerboard(Even,tmp_e,sol);
+                    pickCheckerboard(Odd ,tmp_o,sol);
+                    
+                   
+                    LOG(Message) << GridLogMessage<< "make the preconditioned source"<<std::endl;
+                    /////////////////////////////////////////////////////
+                    // src_o = (source_o - Moe MeeInv source_e) pc
+                    /////////////////////////////////////////////////////
+                    action.MooeeInv(tmp_e,tmpRB);  assert( tmpRB.Checkerboard() ==Even);
+                    action.Meooe   (tmpRB,tmpRB2); assert( tmpRB2.Checkerboard() ==Odd);
+                    tmpRB2=tmp_o-tmpRB2;           assert( tmpRB2.Checkerboard() ==Odd);
+                    action.Mooee(tmpRB2,tmp_o);
+                    
+                    TMP2[idx] = tmp1;
+                    LMA(tmp_o, tmpRB);
+                    setCheckerboard(sol,tmpRB);
+                    
+                    // zero out even part
+                    tmpRB2.Checkerboard()=Even;
+                    tmpRB2=Zero();
+                    setCheckerboard(sol,tmpRB2);
+
+                    SOL2[idx] = sol;
+
+                    
+                    if ((idx+1)%nrhs ==0){
+                        s_sol= 0;
+                   
+                        Grid_split  (TMP2,s_tmp);
+                        Grid_split  (SOL2,s_sol);
+                        Grid_split  (U, s_U);
+
+                        // Fermionic matrix on split grid
+                        Grid::NaiveStaggeredFermionR Ds(s_U,*SGrid,*SrbGrid,mass,c1,tad);
+
+                        // CG on split-grid
+                        ConjugateGradient<FermionField> CG(par().residual,par().maxIteration);
+                        HADRONS_DEFAULT_SCHUR_SOLVE<FermionField> schurSolver(CG,par().subGuess,par().solInitGuess);
+                        schurSolver(Ds, s_tmp, s_sol, *guesserPt);
+
+
+                        LOG(Message) << GridLogMessage<< "Unsplitting the result"<<std::endl;
+                        Grid_unsplit(SOL2,s_sol);
+                        for (int s=0;s<nrhs;s++){
+
+                            //think of how to modify the results - maybe a loop over nrhs should be good
+                            int s_mu = ts_mu_pairs[s].second;
+                            int s_ts = ts_mu_pairs[s].first;
+                            LOG(Message) << GridLogMessage<< "s_mu = "<<s_mu<<"s_ts= "<<s_ts<<std::endl;
+
+                            sub = Zero();
+                            pickCheckerboard(Even,tmp_e,TMP2[s]);
+                            action.Meooe(tmp_e,tmp_o);
+                            LLsub(tmp_o,tmp_e);
+                            action.Meooe(tmp_e,tmp_o);// tmp_o is now even
+                            setCheckerboard(sub,tmp_o);
+                            SOL2[s] += sub;
+                            
+                    
+                            // take inner-product with eigenmode on all time slices
+                            solshift = Cshift(SOL2[s],s_mu,1);
+                            solshift = Umu[s_mu]*solshift;
+                            sliceInnerProductVector(corr,Sink[s],solshift,3); //second term
+                    
+                            for(int tsnk=0; tsnk<nt; tsnk++){
+                                result[s_mu].corr[(tsnk-s_ts+nt)%nt] += (corr[tsnk]);
+                            }
+                    
+                    
+                            sourceshift = Cshift(Sink[s],s_mu,1);
+                            sourceshift = Umu[s_mu]*sourceshift;
+                            sliceInnerProductVector(corr,sourceshift,SOL2[s],3); //fourth term
+                            for(int tsnk=0; tsnk<nt; tsnk++){
+                                result[s_mu].corr[(tsnk-s_ts+nt)%nt] += (corr[tsnk]);
+                            }
+                           
+                        }
+              
+                        
+                        ts_mu_pairs.clear();
+                        idx=-1;
+                    }
+                }
+            }
+            LOG(Message) << GridLogMessage<< "idx = "<<idx<<std::endl;
+            idx++;
         }
     }
+    for (int i = 0; i < 3; ++i){
+        if(U.Grid()->IsBoss()){
+            makeFileDir(par().output);
+            outFileName = par().output+"HLcc_2pt_mu"+std::to_string(i);
+            for(int t=0; t<nt; t++)
+                result[i].corr[t] = result[i].corr[t]/std::complex<double>(hits, 0.0);
+            saveResult(outFileName, "HLCC", result[i]);
+        }
+    }
+    
 }
+    
 END_MODULE_NAMESPACE
 
 END_HADRONS_NAMESPACE
 
 #endif
+ 
+ // instead of 1 CG on all nodes, we want multiples CGs across all nodes
+ //check Grids, e-Pack l empty means no deflation thats what we want as we want to deflate before split manually so solver should be without deflation
+
