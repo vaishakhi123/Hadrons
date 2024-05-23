@@ -150,6 +150,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::setup(void)
     envTmpLat(FermionField, "sink");
     envTmpLat(FermionField, "tmp");
     envTmpLat(FermionField, "tmp2");
+    envTmpLat(FermionField, "tmp3");
     envTmpLat(FermionField, "sol");
     envTmpLat(FermionField, "solshift");
     envTmpLat(FermionField, "sourceshift");
@@ -202,11 +203,13 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
     Lattice<iScalar<vInteger>> lin_t(U.Grid()); lin_t=x+y+z;
     LatticeComplex phases(U.Grid());
     std::vector<LatticeColourMatrix> Umu(3,U.Grid());
+    
     // source, solution
     envGetTmp(FermionField, source);
     envGetTmp(FermionField, sink);
     envGetTmp(FermionField, tmp);
     envGetTmp(FermionField, tmp2);
+    envGetTmp(FermionField, tmp3);
     envGetTmp(FermionField, sol);
     envGetTmp(FermionField, solshift);
     envGetTmp(FermionField, sourceshift);
@@ -256,6 +259,13 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
     
 
     FermionField sub(env().getGrid());
+    Coordinate srcSite;
+    ColourMatrix UmuSrc;
+    srcSite[0]=4;
+    srcSite[1]=4;
+    srcSite[2]=4;
+
+    
 
     // lopp over time slice
     for(int ts=0; ts<nt;ts+=par().tinc){
@@ -264,6 +274,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
         //std::complex<double> eta = precomputedRandomNumbers[ts / par().tinc];
         // lopp over directions
         for(int mu=0;mu<3;mu++){
+            
 
             LOG(Message) << "StagMesonLoopCCHLHL src_mu " << mu << std::endl;
              
@@ -302,71 +313,48 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
                     
                     tmp = where(t == ts, source, source*0.);
                     tmp2 = adj(Umu[mu]) * tmp;
-                   
-                    // shift source at x to x+mu
+                    
+                    // shift source x-mu to x
                     tmp = Cshift(tmp2, mu, -1);
-                    LOG(Message) << GridLogMessage<< "mu = "<<mu<<"ts= "<<ts<<std::endl;
-                    solver(sol, tmp);
-                    // subtract the low modes
-                    sub = Zero();
-                    pickCheckerboard(Even,tmp_e,tmp);
-                    action.Meooe(tmp_e,tmp_o);
-                    LLsub(tmp_o,tmp_e);
-                    action.Meooe(tmp_e,tmp_o);// tmp_o is now even
-                    setCheckerboard(sub,tmp_o);
-                    sol += sub;
-                
-                    //LOG(Message) << "Solution " << sol << std::endl;
-                    // take inner-product with eigenbra on all time slices
-                    solshift = Cshift(sol,mu,1);
-                    solshift = Umu[mu]*solshift;
-                    sliceInnerProductVector(corr,sink,solshift,3); //first term
                     
-                    for(int tsnk=0; tsnk<nt; tsnk++){
-                        result[mu].corr[(tsnk-ts+nt)%nt] += (corr[tsnk]);
-                    }
-                    
-                    
-                    sourceshift = Cshift(sink,mu,1);
-                    sourceshift = Umu[mu]*sourceshift;
-                    sliceInnerProductVector(corr,sourceshift,sol,3); //third term
-                    
-                    // take inner-product with eigenmode on all time slices
-                    for(int tsnk=0; tsnk<nt; tsnk++){
-                        result[mu].corr[(tsnk-ts+nt)%nt] += (corr[tsnk]);
-                    }
+                    tmp3 = tmp;
 
                     tmp = where(t == ts, source, source*0.);
                     // shift source
                     tmp2 = Cshift(tmp, mu, 1);
                     tmp = Umu[mu] * tmp2;
 
+                    tmp3 += tmp;
+
                     LOG(Message) << GridLogMessage<< "mu = "<<mu<<"ts= "<<ts<<std::endl;
-                    solver(sol, tmp);
+                    solver(sol, tmp3);
+
+                    // subtract the low modes
                     sub = Zero();
-                    pickCheckerboard(Even,tmp_e,tmp);
+                    pickCheckerboard(Even,tmp_e,tmp3);
                     action.Meooe(tmp_e,tmp_o);
                     LLsub(tmp_o,tmp_e);
                     action.Meooe(tmp_e,tmp_o);// tmp_o is now even
                     setCheckerboard(sub,tmp_o);
                     sol += sub;
-                    
-                    // take inner-product with eigenmode on all time slices
+                
+             
+                    // take inner-product with eigenbra on all time slices
                     solshift = Cshift(sol,mu,1);
                     solshift = Umu[mu]*solshift;
-                    sliceInnerProductVector(corr,sink,solshift,3); //second term
+                    sliceInnerProductVector(corr,sink,solshift,3); //first term + second term
                     
                     for(int tsnk=0; tsnk<nt; tsnk++){
-                        
                         result[mu].corr[(tsnk-ts+nt)%nt] += (corr[tsnk]);
                     }
-                    
-                    
+            
+                    // take inner-product with eigenmode on all time slices
+                        
                     sourceshift = Cshift(sink,mu,1);
                     sourceshift = Umu[mu]*sourceshift;
                     sliceInnerProductVector(corr,sourceshift,sol,3); //fourth term
                     for(int tsnk=0; tsnk<nt; tsnk++){
-                        result[mu].corr[(tsnk-ts+nt)%nt] += (corr[tsnk]);
+                        result[mu].corr[(tsnk-ts+nt)%nt] += (corr[tsnk]); 
                     }
                 }
             }
@@ -389,5 +377,3 @@ END_MODULE_NAMESPACE
 END_HADRONS_NAMESPACE
 
 #endif
- 
- // instead of 1 CG on all nodes, we want multiples CGs across all nodes
