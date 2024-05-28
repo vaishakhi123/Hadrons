@@ -49,7 +49,7 @@ See the full license in the file "LICENSE" in the top level distribution directo
 BEGIN_HADRONS_NAMESPACE
 
 /******************************************************************************
- *             TMesonLoopCCHL  -split grid version                             *
+ *             TMesonLoopCCHL                                    *
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MContraction)
 
@@ -171,6 +171,7 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::setup(void)
     envTmpLat(FermionField, "sink");
     envTmpLat(FermionField, "tmp1");
     envTmpLat(FermionField, "tmp2");
+    envTmpLat(FermionField, "tmp3");
     envTmpLat(FermionField, "sol");
     envTmpLat(FermionField, "solshift");
     envTmpLat(FermionField, "sourceshift");
@@ -278,19 +279,17 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
     envGetTmp(FermionField, sol);
     envGetTmp(FermionField, tmp1);
     envGetTmp(FermionField, tmp2);
+    envGetTmp(FermionField, tmp3);
     envGetTmp(FermionField, solshift);
     envGetTmp(FermionField, sourceshift);
     envGetTmp(FermionField, w);
 
     std::vector<FermionField>    TMP(nrhs,env().getGrid());
-    std::vector<FermionField>    TMP2(nrhs,env().getGrid());
     
     std::vector<FermionField>    Sink(nrhs,env().getGrid());
     std::vector<FermionField>    SOL(nrhs,env().getGrid());
-    std::vector<FermionField>    SOL2(nrhs,env().getGrid());
     for(int s=0;s<nrhs;s++){ 
         SOL[s]=Zero();
-        SOL2[s] =Zero();
     }
     std::string outFileName;
     std::vector<std::vector<std::vector<ComplexD>>> all_results(3, 
@@ -398,9 +397,18 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
                     
                     tmp1 = where(t == ts, source, source*0.);
                     tmp2 = adj(Umu[mu]) * tmp1;
-                    // shift source at x to x+mu
+                    // shift source at x-mu to x
                     tmp1 = Cshift(tmp2, mu, -1);
-                    sol = tmp1;
+                    tmp3 = tmp1;
+
+                    tmp1 = where(t == ts, source, source*0.);
+                    // shift source
+                    tmp2 = Cshift(tmp1, mu, 1);
+                    tmp1 = Umu[mu] * tmp2;
+
+                    tmp3 += tmp1;
+
+                    sol = tmp3;
                     
                     pickCheckerboard(Even,tmp_e,sol);
                     pickCheckerboard(Odd ,tmp_o,sol);
@@ -417,7 +425,7 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
 
                     tmpRB2.Grid()->show_decomposition();
                     //setCheckerboard(tmp1,tmpRB2);
-                    TMP[idx] = tmp1 ;
+                    TMP[idx] = tmp3 ;
                     
                     LMA(tmp_o, tmpRB);
                     setCheckerboard(sol,tmpRB);
@@ -456,8 +464,6 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
                         HADRONS_DEFAULT_SCHUR_SOLVE<FermionField> schurSolver(CG,par().subGuess,par().solInitGuess); 
                         schurSolver(Ds, s_tmp, s_sol, *guesserPt);
                         
-                       
-    
 
                         LOG(Message) << GridLogMessage<< "Unsplitting the result"<<std::endl;
                         Grid_unsplit(SOL,s_sol);
@@ -499,97 +505,10 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
                             }
                            
                         }
-                        
-                    }
-
-                    tmp1 = where(t == ts, source, source*0.);
-                    // shift source
-                    tmp2 = Cshift(tmp1, mu, 1);
-                    tmp1 = Umu[mu] * tmp2;
-
-                    sol = tmp1;
-
-                    pickCheckerboard(Even,tmp_e,sol);
-                    pickCheckerboard(Odd ,tmp_o,sol);
                     
-                   
-                    LOG(Message) << GridLogMessage<< "make the preconditioned source"<<std::endl;
-                    /////////////////////////////////////////////////////
-                    // src_o = (source_o - Moe MeeInv source_e) pc
-                    /////////////////////////////////////////////////////
-                    action.MooeeInv(tmp_e,tmpRB);  assert( tmpRB.Checkerboard() ==Even);
-                    action.Meooe   (tmpRB,tmpRB2); assert( tmpRB2.Checkerboard() ==Odd);
-                    tmpRB2=tmp_o-tmpRB2;           assert( tmpRB2.Checkerboard() ==Odd);
-                    action.Mooee(tmpRB2,tmp_o);
-                    
-                    TMP2[idx] = tmp1;
-                    LMA(tmp_o, tmpRB);
-                    setCheckerboard(sol,tmpRB);
-                    
-                    // zero out even part
-                    tmpRB2.Checkerboard()=Even;
-                    tmpRB2=Zero();
-                    setCheckerboard(sol,tmpRB2);
-
-                    SOL2[idx] = sol;
-
-                    
-                    if ((idx+1)%nrhs ==0){
-                        s_sol= 0;
-                   
-                        Grid_split  (TMP2,s_tmp);
-                        Grid_split  (SOL2,s_sol);
-                        Grid_split  (U, s_U);
-
-                        // Fermionic matrix on split grid
-                        Grid::NaiveStaggeredFermionR Ds(s_U,*SGrid,*SrbGrid,mass,c1,tad);
-
-                        // CG on split-grid
-                        ConjugateGradient<FermionField> CG(par().residual,par().maxIteration);
-                        HADRONS_DEFAULT_SCHUR_SOLVE<FermionField> schurSolver(CG,par().subGuess,par().solInitGuess);
-                        schurSolver(Ds, s_tmp, s_sol, *guesserPt);
-
-
-                        LOG(Message) << GridLogMessage<< "Unsplitting the result"<<std::endl;
-                        Grid_unsplit(SOL2,s_sol);
-                        for (int s=0;s<nrhs;s++){
-
-                            //think of how to modify the results - maybe a loop over nrhs should be good
-                            int s_mu = ts_mu_pairs[s].second;
-                            int s_ts = ts_mu_pairs[s].first;
-                            LOG(Message) << GridLogMessage<< "s_mu = "<<s_mu<<"s_ts= "<<s_ts<<std::endl;
-
-                            sub = Zero();
-                            pickCheckerboard(Even,tmp_e,TMP2[s]);
-                            action.Meooe(tmp_e,tmp_o);
-                            LLsub(tmp_o,tmp_e);
-                            action.Meooe(tmp_e,tmp_o);// tmp_o is now even
-                            setCheckerboard(sub,tmp_o);
-                            SOL2[s] += sub;
-                            
-                    
-                            // take inner-product with eigenmode on all time slices
-                            solshift = Cshift(SOL2[s],s_mu,1);
-                            solshift = Umu[s_mu]*solshift;
-                            sliceInnerProductVector(corr,Sink[s],solshift,3); //second term
-                    
-                            for(int tsnk=0; tsnk<nt; tsnk++){
-                                result[s_mu].corr[(tsnk-s_ts+nt)%nt] += (corr[tsnk]);
-                            }
-                    
-                    
-                            sourceshift = Cshift(Sink[s],s_mu,1);
-                            sourceshift = Umu[s_mu]*sourceshift;
-                            sliceInnerProductVector(corr,sourceshift,SOL2[s],3); //fourth term
-                            for(int tsnk=0; tsnk<nt; tsnk++){
-                                result[s_mu].corr[(tsnk-s_ts+nt)%nt] += (corr[tsnk]);
-                            }
-                           
-                        }
-              
-                        
                         ts_mu_pairs.clear();
                         idx=-1;
+                        
                     }
                 }
             }
