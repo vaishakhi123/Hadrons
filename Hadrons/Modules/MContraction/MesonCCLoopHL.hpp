@@ -68,8 +68,8 @@ public:
                                     double      , residual,
                                     double     , c1,
                                     double     , tad,
-                                    bool, solInitGuess , //subguess - true for making guess solution
-                                    bool, subGuess , //subguess - true for subtract
+                                    bool, solInitGuess , // true for making guess solution
+                                    bool, subGuess , //true for subtract
                                     int, tinc,
                                     int, block,
                                     int, hits,
@@ -254,7 +254,7 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
     
     typedef DeflatedGuesser<FermionField>   FineGuesser;
     //auto guesserPt = std::make_shared<DeflatedGuesser>(epack.evec, epack.eval);
-    std::shared_ptr<LinearFunction<FermionField>> guesserPt(new  FineGuesser(epack.evec, epack.eval));
+    //std::shared_ptr<LinearFunction<FermionField>> guesserPt(new  FineGuesser(epack.evec, epack.eval));
     
     FermionField tmp_e(env().getRbGrid());
     FermionField tmp_o(env().getRbGrid());
@@ -462,7 +462,7 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
                         // CG on split grid
                         ConjugateGradient<FermionField> CG(par().residual,par().maxIteration);
                         HADRONS_DEFAULT_SCHUR_SOLVE<FermionField> schurSolver(CG,par().subGuess,par().solInitGuess); 
-                        schurSolver(Ds, s_tmp, s_sol, *guesserPt);
+                        schurSolver(Ds, s_tmp, s_sol);
                         
 
                         LOG(Message) << GridLogMessage<< "Unsplitting the result"<<std::endl;
@@ -487,7 +487,7 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
                             // take inner-product with eigenbra on all time slices
                             solshift = Cshift(SOL[s],s_mu,1);
                             solshift = Umu[s_mu]*solshift;
-                            sliceInnerProductVector(corr,Sink[s],solshift,3); //first term
+                            sliceInnerProductVector(corr,Sink[s],solshift,3); //first+second term
 
                         
                             for(int tsnk=0; tsnk<nt; tsnk++){
@@ -497,7 +497,7 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
                     
                             sourceshift = Cshift(Sink[s],s_mu,1);
                             sourceshift = Umu[s_mu]*sourceshift;
-                            sliceInnerProductVector(corr,sourceshift,SOL[s],3); //third term
+                            sliceInnerProductVector(corr,sourceshift,SOL[s],3); //third+fourth term
                     
                             // take inner-product with eigenmode on all time slices
                             for(int tsnk=0; tsnk<nt; tsnk++){
@@ -536,4 +536,3 @@ END_HADRONS_NAMESPACE
  
  // instead of 1 CG on all nodes, we want multiples CGs across all nodes
  //check Grids, e-Pack l empty means no deflation thats what we want as we want to deflate before split manually so solver should be without deflation
-

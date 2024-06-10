@@ -239,18 +239,29 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
     int Nl_ = epack.evec.size();
     Complex shift(1., 1.);
     
-    std::vector<std::vector<std::vector<std::vector<ComplexD>>>> randomEtas(nt, std::vector<std::vector<std::vector<ComplexD>>>(3, std::vector<std::vector<ComplexD>>(Nl_, std::vector<ComplexD>(block * 2))));
+    std::vector<std::vector<std::vector<std::vector<std::vector<ComplexD>>>>> randomEtas(
+    nt, 
+    std::vector<std::vector<std::vector<std::vector<ComplexD>>>>(
+        hits, 
+        std::vector<std::vector<std::vector<ComplexD>>>(
+            3, 
+            std::vector<std::vector<ComplexD>>(
+                Nl_, 
+                std::vector<ComplexD>(block * 2)))));
+            
 
-    // Precompute and store random numbers for eta for all time slices, mu, and eigenvectors
+    // Precompute and store random numbers for eta for all time slices, mu, hits and eigenvectors
     for(int ts = 0; ts < nt; ts++){
-        for(int mu = 0; mu < 3; mu++){
-            for(unsigned int il = 0; il < Nl_; il += block){
-                for(int iv = il; iv < il + block; iv++){
-                    for(int pm = 0; pm < 2; pm++){
-                        ComplexD eta;
-                        bernoulli(rngSerial(), eta);
-                        // Store the precomputed random number in the data structure
-                        randomEtas[ts][mu][iv][pm] = eta;
+        for(int hit=0; hit< hits; hit++){
+            for(int mu = 0; mu < 3; mu++){
+                for(unsigned int il = 0; il < Nl_; il += block){
+                    for(int iv = il; iv < il + block; iv++){
+                        for(int pm = 0; pm < 2; pm++){
+                            ComplexD eta;
+                            bernoulli(rngSerial(), eta);
+                            // Store the precomputed random number in the data structure
+                            randomEtas[ts][hit][mu][iv][pm] = eta;
+                        }
                     }
                 }
             }
@@ -259,13 +270,6 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
     
 
     FermionField sub(env().getGrid());
-    Coordinate srcSite;
-    ColourMatrix UmuSrc;
-    srcSite[0]=4;
-    srcSite[1]=4;
-    srcSite[2]=4;
-
-    
 
     // lopp over time slice
     for(int ts=0; ts<nt;ts+=par().tinc){
@@ -280,7 +284,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
              
             // lopp over hits
             LOG(Message) << "Total " << hits << "hits" <<std::endl;
-            for(int hit = 1; hit <= hits; hit++)
+            for(int hit = 0; hit < hits; hit++)
             {
                 // loop over evecs
                 for (unsigned int il = 0; il < Nl_; il+=block)
@@ -302,7 +306,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
                             //ComplexD eta;
                             //bernoulli(rngSerial(), eta);
 		
-			                std::complex<double> eta = randomEtas[ts][mu][iv][pm];
+			                std::complex<double> eta = randomEtas[ts][hit][mu][iv][pm];
                             //LOG(Message) << "random number " << eta << "for ts"<< ts <<std::endl;
 			                eta = (2.*eta - shift)*(1./::sqrt(2.));
                 
@@ -377,3 +381,4 @@ END_MODULE_NAMESPACE
 END_HADRONS_NAMESPACE
 
 #endif
+//check for multiple hits. Use tblum code.
