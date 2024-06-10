@@ -154,13 +154,7 @@ template <typename FImpl1, typename FImpl2>
 void TStagMesonLoopCCHL<FImpl1, FImpl2>::setup(void)
 {
     //Grid_init(&argc,&argv);
-
-    
-
-    
-    
-
-    
+  
     auto        &action     = envGet(FMat, par().action);
     //auto        &solver     = envGet(Solver, par().solver + "_subtract");
     auto        &solver     = envGet(Solver, par().solver);
@@ -203,8 +197,6 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
             result[mu].corr[t]=(ComplexD)(0.,0.);
         }
     }
-    
-    
 
     auto &U       = envGet(LatticeGaugeField, par().gauge);
     auto        &action      = envGet(FMat, par().action);
@@ -529,10 +521,8 @@ void TStagMesonLoopCCHL<FImpl1, FImpl2>::execute(void)
 }
     
 END_MODULE_NAMESPACE
-
 END_HADRONS_NAMESPACE
 
 #endif
- 
- // instead of 1 CG on all nodes, we want multiples CGs across all nodes
- //check Grids, e-Pack l empty means no deflation thats what we want as we want to deflate before split manually so solver should be without deflation
+// instead of 1 CG on all nodes, we want multiples CGs across all nodes
+//check Grids, e-Pack l empty means no deflation thats what we want as we want to deflate before split manually so solver should be without deflation
