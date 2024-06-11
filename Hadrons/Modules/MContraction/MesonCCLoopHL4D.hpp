@@ -237,30 +237,24 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
     }
 
     int Nl_ = epack.evec.size();
-    Complex shift(1., 1.);
     
-    std::vector<std::vector<std::vector<std::vector<std::vector<ComplexD>>>>> randomEtas(
-    nt, 
-    std::vector<std::vector<std::vector<std::vector<ComplexD>>>>(
-        hits, 
-        std::vector<std::vector<std::vector<ComplexD>>>(
-            3, 
-            std::vector<std::vector<ComplexD>>(
-                Nl_, 
-                std::vector<ComplexD>(block * 2)))));
+    std::vector<Complex> eta(nt*3*hits*Nl_*2);
             
 
     // Precompute and store random numbers for eta for all time slices, mu, hits and eigenvectors
     for(int ts = 0; ts < nt; ts++){
-        for(int hit=0; hit< hits; hit++){
-            for(int mu = 0; mu < 3; mu++){
+        for(int mu=0; mu< 3; mu++){
+            for(int hit = 0; hit < hits; hit++){
                 for(unsigned int il = 0; il < Nl_; il += block){
                     for(int iv = il; iv < il + block; iv++){
                         for(int pm = 0; pm < 2; pm++){
-                            ComplexD eta;
-                            bernoulli(rngSerial(), eta);
-                            // Store the precomputed random number in the data structure
-                            randomEtas[ts][hit][mu][iv][pm] = eta;
+                            int idx = ts * hits * 3 * Nl_ * 2 + 
+                                      mu * hits * Nl_ * 2 +
+                                      hit * Nl_ * 2 +
+                                      iv * 2 + pm;
+                            bernoulli(rngSerial(), eta[idx]);
+                            Complex shift(1., 1.);
+                            eta[idx] = (2.*eta[idx] - shift)*(1./::sqrt(2.));
                         }
                     }
                 }
@@ -303,15 +297,14 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
                                 eval = conjugate(eval);
                             }
                             std::complex<double> iota_angle(0.0, std::arg(eval));
-                            //ComplexD eta;
-                            //bernoulli(rngSerial(), eta);
-		
-			                std::complex<double> eta = randomEtas[ts][hit][mu][iv][pm];
-                            //LOG(Message) << "random number " << eta << "for ts"<< ts <<std::endl;
-			                eta = (2.*eta - shift)*(1./::sqrt(2.));
+                            
+                    		int idx = ts * hits * 3 * Nl_ * 2 + 
+                                      mu * hits * Nl_ * 2 +
+                                      hit * Nl_ * 2 +
+                                      iv * 2 + pm;
                 
-                            source += ((eta)*(std::exp(-iota_angle)/std::sqrt(std::abs(eval))))*w;
-                            sink += ((eta)*(1./std::sqrt(std::abs(eval))))*w;
+                            source += ((eta[idx])*(std::exp(-iota_angle)/std::sqrt(std::abs(eval))))*w;
+                            sink += ((eta[idx])*(1./std::sqrt(std::abs(eval))))*w;
                         }
                     } 
                     
