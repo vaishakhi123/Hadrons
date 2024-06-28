@@ -48,6 +48,7 @@ public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(StagSparseA2AMesonFieldPar,
                                     int, cacheBlock,
                                     int, block,
+                                    int, mu,
                                     std::string, left,
                                     std::string, right,
                                     std::string, output);
@@ -219,7 +220,7 @@ void TStagSparseA2AMesonField<FImpl>::execute(void)
     {
         std::stringstream ss;
 
-        ss << "_";
+        ss << "mf000_mu"+std::to_string(par().mu);
 
         return ss.str();
     };
@@ -234,8 +235,8 @@ void TStagSparseA2AMesonField<FImpl>::execute(void)
     {
         StagSparseA2AMesonFieldMetadata md;
         
-        md.momstr='0 0 0';
-        md.gamstr = 'n/a';
+        md.momstr= "0 0 0";
+        md.gamstr = "mu" + std::to_string(par().mu);
         
         return md;
     };
