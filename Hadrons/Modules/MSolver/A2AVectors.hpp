@@ -668,6 +668,8 @@ public:
     SOLVER_TYPE_ALIASES(FImpl,);
     typedef A2AVectorsSchurStaggered<FImpl> A2A;
     typedef typename Grid::NaiveStaggeredFermionR::FermionField SparseFermionField;
+    //typedef typename CoarseField CoarseField;
+
 public:
     // constructor
     TStagSparseA2AVectors(const std::string name);
@@ -729,6 +731,21 @@ void TStagSparseA2AVectors<FImpl, Pack>::setup(void)
     auto &epack = envGet(Pack, par().eigenPack);
     Nl_ = epack.evec.size();
     envTmp(A2A, "a2a", 1, action, solver);
+    
+    // Sparse Grid
+    std::vector<int> blocksize(4);
+    blocksize[0] = par().inc;
+    blocksize[1] = par().inc;
+    blocksize[2] = par().inc;
+    blocksize[3] = par().tinc;
+    envCreate(std::vector<SparseFermionField>, getName() + "_v", 1,
+              2*Nl_, envGetCoarseGrid(SparseFermionField,blocksize));
+    envCreate(std::vector<SparseFermionField>, getName() + "_w0", 1,
+              2*Nl_, envGetCoarseGrid(SparseFermionField,blocksize));
+    envCreate(std::vector<SparseFermionField>, getName() + "_w1", 1,
+              2*Nl_, envGetCoarseGrid(SparseFermionField,blocksize));
+    envCreate(std::vector<SparseFermionField>, getName() + "_w2", 1,
+              2*Nl_, envGetCoarseGrid(SparseFermionField,blocksize));
 }
 
 // execution ///////////////////////////////////////////////////////////////////
@@ -745,29 +762,8 @@ void TStagSparseA2AVectors<FImpl, Pack>::execute(void)
     uint64_t     glbsize = ns*ns*ns * nt;
     envGetTmp(A2A, a2a);
     
-    int orthogdim=3; // time dir
-    
-//    std::vector<SparseFermionField> sparse_v(2*Nl_,&sparseGrid);
-//    std::vector<SparseFermionField> sparse_w0(2*Nl_,&sparseGrid);
-//    std::vector<SparseFermionField> sparse_w1(2*Nl_,&sparseGrid);
-//    std::vector<SparseFermionField> sparse_w2(2*Nl_,&sparseGrid);
-    // Sparse Grid
-    Coordinate sparseLatSize = envGetGrid(FermionField)->FullDimensions();
-    sparseLatSize[0] /= par().inc;
-    sparseLatSize[1] /= par().inc;
-    sparseLatSize[2] /= par().inc;
-    sparseLatSize[3] /= par().tinc;
-    Coordinate simd_layout = GridDefaultSimd(Nd,vComplex::Nsimd());
-    Coordinate mpi_layout  = GridDefaultMpi();
-    GridCartesian sparseGrid(sparseLatSize,simd_layout,mpi_layout);
-    envCreate(std::vector<SparseFermionField>, getName() + "_v", 1,
-              2*Nl_, &sparseGrid);
-    envCreate(std::vector<SparseFermionField>, getName() + "_w0", 1,
-              2*Nl_, &sparseGrid);
-    envCreate(std::vector<SparseFermionField>, getName() + "_w1", 1,
-              2*Nl_, &sparseGrid);
-    envCreate(std::vector<SparseFermionField>, getName() + "_w2", 1,
-              2*Nl_, &sparseGrid);
+    int orthogdim=env().getNd()-1; // time dir
+        
     auto &v = envGet(std::vector<SparseFermionField>, getName() + "_v");
     auto &w0 = envGet(std::vector<SparseFermionField>, getName() + "_w0");
     auto &w1 = envGet(std::vector<SparseFermionField>, getName() + "_w1");
@@ -786,22 +782,29 @@ void TStagSparseA2AVectors<FImpl, Pack>::execute(void)
         
     ComplexField phases(U.Grid());
     int shift;
-    ColourVector vec;
     FermionField temp(U.Grid());
     FermionField temp2(U.Grid());
     //SparseFermionField temp3(&sparseGrid);
     
     //std::random_device rd;  // a seed source for the random number engine
     //std::mt19937 gen(rd()); // mersenne_twister_engine seeded with rd()
-    std::uniform_int_distribution<uint32_t> uid(0, nt-1);
+    // sparsen on even or odd sites on time slice
+    std::uniform_int_distribution<uint32_t> uid(0, 1);
     std::vector<uint32_t> xshift(nt);
     std::vector<uint32_t> yshift(nt);
     std::vector<uint32_t> zshift(nt);
-    
-    for(int t=0;t<nt;t++){
-        xshift[t]=uid(rngSerial()._generators[0]);
-        yshift[t]=uid(rngSerial()._generators[0]);
-        zshift[t]=uid(rngSerial()._generators[0]);
+    if(par().inc != 1){
+        for(int t=0;t<nt;t++){
+            xshift[t]=uid(rngSerial()._generators[0]);
+            yshift[t]=uid(rngSerial()._generators[0]);
+            zshift[t]=uid(rngSerial()._generators[0]);
+        }
+    }else{//will miss site 0000 otherwise
+        for(int t=0;t<nt;t++){
+            xshift[t]=0;
+            yshift[t]=0;
+            zshift[t]=0;
+        }
     }
     CartesianCommunicator::BroadcastWorld(0,(void *)&xshift[0],sizeof(uint32_t)*xshift.size());
     CartesianCommunicator::BroadcastWorld(0,(void *)&yshift[0],sizeof(uint32_t)*yshift.size());
@@ -809,11 +812,14 @@ void TStagSparseA2AVectors<FImpl, Pack>::execute(void)
     
     //save for later
     std::vector<complex<double>> evalM(2*Nl_);
-    uint64_t localsize;
-    localsize = 1;
-    for(int d=0;d<Nd;d++)
-        localsize=localsize*U.Grid()->_ldimensions[d];
     
+    // global to local coord shift
+    int tloc2glbshift;
+    tloc2glbshift=U.Grid()->_lstart[3];
+    int locx=U.Grid()->_ldimensions[0];
+    int locy=U.Grid()->_ldimensions[1];
+    int locz=U.Grid()->_ldimensions[2];
+    int loct=U.Grid()->_ldimensions[3];
     for (unsigned int il = 0; il < 2*Nl_; il++)
     {
         // eval of unpreconditioned Dirac op
@@ -823,9 +829,6 @@ void TStagSparseA2AVectors<FImpl, Pack>::execute(void)
         LOG(Message) << "W vector i = " << il << " (low modes)" << std::endl;
         // don't divide by lambda. Do it in contraction since it is complex
         a2a.makeLowModeW(temp, epack.evec[il/2], eval, il%2);
-//        autoView(w_v,w[0],CpuWrite);
-//        autoView(v_v,v[0],CpuWrite);
-//        autoView(temp_v,temp,CpuRead);
         
         stopTimer("W low mode");
         il%2 ? eval=conjugate(eval) : eval ;
@@ -847,50 +850,53 @@ void TStagSparseA2AVectors<FImpl, Pack>::execute(void)
             temp2 = Umu*Cshift(temp, mu, 1);
             
             // Sparsen
-            //for(int t=0; t<nt;t+=par().tinc){
-            thread_for(sdx,localsize,{
+            //thread_for_collapse(4,t,loct,{
+            thread_for(t,loct,{
 
-                Coordinate site;
-                Coordinate sparseSite;
-
-                U.Grid()->LocalIndexToLocalCoor(sdx,site);
-                int t=site[3];
-                int tglb=t+U.Grid()->_lstart[orthogdim];
-                sparseSite[3]=t;
-                site[2]=(site[2]+zshift[tglb]+ns)%ns;
-                sparseSite[2]=site[2]/par().inc;
-                site[1]=(site[1]+yshift[tglb]+ns)%ns;
-                sparseSite[1]=site[1]/par().inc;
-                site[0]=(site[0]+xshift[tglb]+ns)%ns;
-                sparseSite[0]=site[0]/par().inc;
-
-                if(site[0]%par().inc==0 && site[1]%par().inc==0 && site[2]%par().inc==0 ){
-                    if(mu==0){// do v once
-                        peekLocalSite(vec,temp,site);
-                        pokeLocalSite(vec,v[il],sparseSite);
-                        peekLocalSite(vec,temp2,site);
-                        pokeLocalSite(vec,w0[il],sparseSite);
-                    }else if(mu==1){
-                        peekLocalSite(vec,temp2,site);
-                        pokeLocalSite(vec,w1[il],sparseSite);
-                    }else if(mu==2){
-                        peekLocalSite(vec,temp2,site);
-                        pokeLocalSite(vec,w2[il],sparseSite);
+                int tglb=t+tloc2glbshift;
+                Coordinate site(Nd);
+                Coordinate sparseSite(Nd);
+                ColourVector vec;
+                for(int z=zshift[tglb];z<locz;z+=par().inc){
+                    for(int y=yshift[tglb];y<locy;y+=par().inc){
+                        for(int x=xshift[tglb];x<locx;x+=par().inc){
+                            
+                            site[0]=x;
+                            site[1]=y;
+                            site[2]=z;
+                            site[3]=t;
+                            sparseSite[3]=t;
+                            for(int i=0;i<Nd-1;i++)
+                                sparseSite[i]=site[i]/par().inc;
+                            
+                            if(mu==0){// do v once
+                                peekLocalSite(vec,temp,site);
+                                pokeLocalSite(vec,v[il],sparseSite);
+                                peekLocalSite(vec,temp2,site);
+                                pokeLocalSite(vec,w0[il],sparseSite);
+                            }else if(mu==1){
+                                peekLocalSite(vec,temp2,site);
+                                pokeLocalSite(vec,w1[il],sparseSite);
+                            }else if(mu==2){
+                                peekLocalSite(vec,temp2,site);
+                                pokeLocalSite(vec,w2[il],sparseSite);
+                            }
+                        }
                     }
                 }
             });
         }// end mu
     }// end evecs
-    std::string dir = dirname(par().output);
-    int status = mkdir(dir);
-    if (status)
-    {
-        HADRONS_ERROR(Io, "cannot create directory '" + dir
-                      + "' ( " + std::strerror(errno) + ")");
-    }
     
+    std::string dir = dirname(par().output);
     if (!par().output.empty())
     {
+        int status = mkdir(dir);
+        if (status)
+        {
+            HADRONS_ERROR(Io, "cannot create directory '" + dir
+                          + "' ( " + std::strerror(errno) + ")");
+        }
         startTimer("V I/O");
         A2AVectorsIo::write(par().output + "_v", v, par().multiFile, vm().getTrajectory());
         stopTimer("V I/O");
@@ -903,7 +909,12 @@ void TStagSparseA2AVectors<FImpl, Pack>::execute(void)
     
     if ( env().getGrid()->IsBoss() ) {
         
-        std::string eval_filename = A2AVectorsIo::evalFilename(par().output,vm().getTrajectory());
+        std::string eval_filename;
+        if (!par().output.empty()){
+            eval_filename=A2AVectorsIo::evalFilename(par().output,vm().getTrajectory());
+        }else{
+            eval_filename=A2AVectorsIo::evalFilename("evals",vm().getTrajectory());
+        }
         A2AVectorsIo::initEvalFile(eval_filename,
                                    evalM.size());// total size
         A2AVectorsIo::saveEvalBlock(eval_filename,
