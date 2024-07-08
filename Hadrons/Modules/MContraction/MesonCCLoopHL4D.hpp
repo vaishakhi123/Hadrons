@@ -239,7 +239,11 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
     int Nl_ = epack.evec.size();
     
     std::vector<Complex> eta(nt*3*hits*Nl_*2);
-            
+    int tblock;
+    tblock = nt;
+    std::vector<FermionField> source_list(tblock*3*hits, env().getGrid()); 
+    std::vector<FermionField> sink_list(tblock*3*hits,env().getGrid());
+
 
     // Precompute and store random numbers for eta for all time slices, mu, hits and eigenvectors
     for(int ts = 0; ts < nt; ts++){
@@ -262,53 +266,66 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
         }
     }
     
-
     FermionField sub(env().getGrid());
 
     // lopp over time slice
-    for(int ts=0; ts<nt;ts+=par().tinc){
-
-        LOG(Message) << "StagMesonLoopCCHLHL src_t " << ts << std::endl;
-        //std::complex<double> eta = precomputedRandomNumbers[ts / par().tinc];
-        // lopp over directions
-        for(int mu=0;mu<3;mu++){
-            
-
-            LOG(Message) << "StagMesonLoopCCHLHL src_mu " << mu << std::endl;
-             
-            // lopp over hits
-            LOG(Message) << "Total " << hits << "hits" <<std::endl;
-            for(int hit = 0; hit < hits; hit++)
-            {
-                // loop over evecs
-                for (unsigned int il = 0; il < Nl_; il+=block)
+    for(int its=0; its<nt;its+=tblock){
+        for (int ts=its; ts< its+tblock; ts++){
+            // lopp over directions
+            for(int mu=0;mu<3;mu++){
+                
+                // lopp over hits
+                for(int hit = 0; hit < hits; hit++)
                 {
-                    source = 0.0;
-                    sink = 0.0;
-
-                    //loop over blocks
-                    for(int iv=il;iv<il+block;iv++){
-            
-                        std::complex<double> eval(mass,sqrt(epack.eval[iv]-mass*mass));
-                        for(int pm=0;pm<2;pm++){
-                            LOG(Message) << "Eigenvector " << 2*iv+pm << std::endl;
-                            a2a.makeLowModeW(w, epack.evec[iv], eval, pm);
-                            if(pm){
-                                eval = conjugate(eval);
-                            }
-                            std::complex<double> iota_angle(0.0, std::arg(eval));
-                            
-                    		int idx = ts * hits * 3 * Nl_ * 2 + 
+                        int s_idx = (ts-its)*3*hits + mu*hits + hit;
+                        source_list[s_idx] = 0.0;
+                        sink_list[s_idx] = 0.0;
+                }
+            }
+        }
+        for(int iv=0;iv<Nl_;iv++){
+            std::complex<double> eval(mass,sqrt(epack.eval[iv]-mass*mass));
+            for(int pm=0;pm<2;pm++){
+                a2a.makeLowModeW(w, epack.evec[iv], eval, pm);
+                if(pm){
+                    eval = conjugate(eval);
+                }
+                std::complex<double> iota_angle(0.0, std::arg(eval));
+                for (int ts=its; ts< its+tblock; ts++){
+    
+                    // lopp over directions
+                    for(int mu=0;mu<3;mu++){
+                    
+        
+                        for(int hit = 0; hit < hits; hit++)
+                        {
+                        
+                            int s_idx = (ts-its)*3*hits + mu*hits + hit;
+                            int idx = ts * hits * 3 * Nl_ * 2 + 
                                       mu * hits * Nl_ * 2 +
                                       hit * Nl_ * 2 +
                                       iv * 2 + pm;
                 
-                            source += ((eta[idx])*(std::exp(-iota_angle)/std::sqrt(std::abs(eval))))*w;
-                            sink += ((eta[idx])*(1./std::sqrt(std::abs(eval))))*w;
+                            source_list[s_idx] += ((eta[idx])*(std::exp(-iota_angle)/std::sqrt(std::abs(eval))))*w;
+                            sink_list[s_idx] += ((eta[idx])*(1./std::sqrt(std::abs(eval))))*w;
                         }
-                    } 
+                    }
+                }
+            }
+        }
+        for (int ts=its; ts< its+tblock; ts++){
+
+            LOG(Message) << "StagMesonLoopCCHLHL src_mu " << mu << std::endl;
+            // lopp over directions
+            for(int mu=0;mu<3;mu++){
+            
+
+            LOG(Message) << "StagMesonLoopCCHLHL src_mu " << mu << std::endl;
+             
+            for(int hit = 0; hit < hits; hit++){
+                    int s_idx = (ts-its)*3*hits + mu*hits + hit;
                     
-                    tmp = where(t == ts, source, source*0.);
+                    tmp = where(t == ts, source_list[s_idx], source_list[s_idx]*0.);
                     tmp2 = adj(Umu[mu]) * tmp;
                     
                     // shift source x-mu to x
@@ -316,7 +333,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
                     
                     tmp3 = tmp;
 
-                    tmp = where(t == ts, source, source*0.);
+                    tmp = where(t == ts, source_list[s_idx], source_list[s_idx]*0.);
                     // shift source
                     tmp2 = Cshift(tmp, mu, 1);
                     tmp = Umu[mu] * tmp2;
@@ -339,7 +356,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
                     // take inner-product with eigenbra on all time slices
                     solshift = Cshift(sol,mu,1);
                     solshift = Umu[mu]*solshift;
-                    sliceInnerProductVector(corr,sink,solshift,3); //first term + second term
+                    sliceInnerProductVector(corr,sink_list[s_idx],solshift,3); //first term + second term
                     
                     for(int tsnk=0; tsnk<nt; tsnk++){
                         result[mu].corr[(tsnk-ts+nt)%nt] += (corr[tsnk]);
@@ -347,7 +364,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
             
                     // take inner-product with eigenmode on all time slices
                         
-                    sourceshift = Cshift(sink,mu,1);
+                    sourceshift = Cshift(sink_list[s_idx],mu,1);
                     sourceshift = Umu[mu]*sourceshift;
                     sliceInnerProductVector(corr,sourceshift,sol,3); //fourth term
                     for(int tsnk=0; tsnk<nt; tsnk++){
