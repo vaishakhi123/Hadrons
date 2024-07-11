@@ -40,6 +40,7 @@ See the full license in the file "LICENSE" in the top level distribution directo
 #include <Hadrons/Modules/MSource/Point.hpp>
 #include <Hadrons/Solver.hpp>
 #include <Grid/lattice/Lattice_reduction.h>
+#include <ctime>
 
 BEGIN_HADRONS_NAMESPACE
 
@@ -61,6 +62,7 @@ public:
                                     double, mass,
                                     int, tinc,
                                     int, block,
+                                    int, tblock,
                                     int, hits);
 };
 
@@ -239,8 +241,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
     int Nl_ = epack.evec.size();
     
     std::vector<Complex> eta(nt*3*hits*Nl_*2);
-    int tblock;
-    tblock = nt;
+    int tblock = par().tblock;
     std::vector<FermionField> source_list(tblock*3*hits, env().getGrid()); 
     std::vector<FermionField> sink_list(tblock*3*hits,env().getGrid());
 
@@ -268,13 +269,13 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
     
     FermionField sub(env().getGrid());
 
-    // lopp over time slice
+    // loop over time slice
     for(int its=0; its<nt;its+=tblock){
         for (int ts=its; ts< its+tblock; ts++){
-            // lopp over directions
+            // loop over directions
             for(int mu=0;mu<3;mu++){
                 
-                // lopp over hits
+                // loop over hits
                 for(int hit = 0; hit < hits; hit++)
                 {
                         int s_idx = (ts-its)*3*hits + mu*hits + hit;
@@ -286,7 +287,9 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
         for(int iv=0;iv<Nl_;iv++){
             std::complex<double> eval(mass,sqrt(epack.eval[iv]-mass*mass));
             for(int pm=0;pm<2;pm++){
+                
                 a2a.makeLowModeW(w, epack.evec[iv], eval, pm);
+                 
                 if(pm){
                     eval = conjugate(eval);
                 }
@@ -296,10 +299,9 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
                     // lopp over directions
                     for(int mu=0;mu<3;mu++){
                     
-        
                         for(int hit = 0; hit < hits; hit++)
                         {
-                        
+                            clock_t start_sourceSink = clock();
                             int s_idx = (ts-its)*3*hits + mu*hits + hit;
                             int idx = ts * hits * 3 * Nl_ * 2 + 
                                       mu * hits * Nl_ * 2 +
@@ -313,16 +315,17 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
                 }
             }
         }
+        // loop over time slices
         for (int ts=its; ts< its+tblock; ts++){
-
-            LOG(Message) << "StagMesonLoopCCHLHL src_mu " << mu << std::endl;
-            // lopp over directions
+            
+            LOG(Message) << "StagMesonLoopCCHLHL src_ts " << ts << std::endl;
+            // loop over directions
             for(int mu=0;mu<3;mu++){
             
 
-            LOG(Message) << "StagMesonLoopCCHLHL src_mu " << mu << std::endl;
-             
-            for(int hit = 0; hit < hits; hit++){
+                LOG(Message) << "StagMesonLoopCCHLHL src_mu " << mu << std::endl;
+                 
+                for(int hit = 0; hit < hits; hit++){
                     int s_idx = (ts-its)*3*hits + mu*hits + hit;
                     
                     tmp = where(t == ts, source_list[s_idx], source_list[s_idx]*0.);
@@ -340,7 +343,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
 
                     tmp3 += tmp;
 
-                    LOG(Message) << GridLogMessage<< "mu = "<<mu<<"ts= "<<ts<<std::endl;
+                    
                     solver(sol, tmp3);
 
                     // subtract the low modes
@@ -391,4 +394,3 @@ END_MODULE_NAMESPACE
 END_HADRONS_NAMESPACE
 
 #endif
-//check for multiple hits. Use tblum code.
