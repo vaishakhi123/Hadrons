@@ -59,6 +59,7 @@ public:
                                     std::string, eigenPack,
                                     std::string, solver,
                                     std::string, action,
+                                    bool, precision,
                                     double, mass,
                                     int, tinc,
                                     int, block,
@@ -183,14 +184,14 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
     //auto        &solver    = envGet(Solver, par().solver + "_subtract");
     auto        &solver    = envGet(Solver, par().solver);
     auto &epack   = envGet(BaseFermionEigenPack<FImpl1>, par().eigenPack);
+    
     double mass = par().mass;
     int block = par().block;
     int hits = par().hits;
-    std::vector<double> mlsq(epack.eval.size());
-    for(int i=0;i<epack.eval.size();i++){
-        mlsq[i]=(epack.eval[i]-mass*mass) * mass;
-    }
-    DeflatedGuesser<FermionField> LLsub(epack.evec, mlsq);
+
+    int Nl_ = epack.evec.size();
+    std::vector<double> mlsq(Nl_);
+    
     FermionField tmp_e(env().getRbGrid());
     FermionField tmp_o(env().getRbGrid());
 
@@ -216,6 +217,32 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
     envGetTmp(FermionField, solshift);
     envGetTmp(FermionField, sourceshift);
     envGetTmp(FermionField, w);
+
+
+    std::vector<double> evalD(Nl_); 
+    
+    if (par().precision){ 
+        for (int i = 0; i < epack.eval.size(); ++i) { 
+            
+            evalD[i] = static_cast<double>(epack.eval[i]);         
+        }
+    } 
+    else{ 
+        evalD = epack.eval;
+    } 
+    
+    LOG(Message) << "After precision change " << std::endl;
+    
+    //for (int ss=0; ss<20; ss++){
+        //auto evec_v = epack.evec[0].View(CpuRead);
+        //LOG(Message) << "epack.evec[0] "<< evec_v[ss] << std::endl;
+        
+    //}
+    
+    for(int i=0;i<Nl_;i++){
+        mlsq[i]=(evalD[i]-mass*mass) * mass;
+    }
+    DeflatedGuesser<FermionField> LLsub(epack.evec, mlsq);
     
     std::string outFileName;
     std::vector<std::vector<std::vector<ComplexD>>> all_results(3, 
@@ -238,7 +265,6 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
         Umu[mu] *= phases;
     }
 
-    int Nl_ = epack.evec.size();
     
     std::vector<Complex> eta(nt*3*hits*Nl_*2);
     int tblock = par().tblock;
@@ -285,7 +311,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
             }
         }
         for(int iv=0;iv<Nl_;iv++){
-            std::complex<double> eval(mass,sqrt(epack.eval[iv]-mass*mass));
+            std::complex<double> eval(mass,sqrt(evalD[iv]-mass*mass));
             for(int pm=0;pm<2;pm++){
                 
                 a2a.makeLowModeW(w, epack.evec[iv], eval, pm);
@@ -301,7 +327,6 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
                     
                         for(int hit = 0; hit < hits; hit++)
                         {
-                            clock_t start_sourceSink = clock();
                             int s_idx = (ts-its)*3*hits + mu*hits + hit;
                             int idx = ts * hits * 3 * Nl_ * 2 + 
                                       mu * hits * Nl_ * 2 +
@@ -342,7 +367,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
                     tmp = Umu[mu] * tmp2;
 
                     tmp3 += tmp;
-
+                    LOG(Message) << "source "<< tmp3 << std::endl;
                     
                     solver(sol, tmp3);
 
