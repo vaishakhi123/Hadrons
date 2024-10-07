@@ -83,6 +83,10 @@ public:
 };
 
 MODULE_REGISTER_TMP(StagLoadFermionEigenPack, ARG(TStagLoadEigenPack<FermionEigenPack<STAGIMPL>, GIMPL, STAGIMPL>), MIO);
+#ifdef GRID_DEFAULT_PRECISION_DOUBLE
+MODULE_REGISTER_TMP(StagLoadFermionEigenPackIo32, 
+                    ARG(TStagLoadEigenPack<FermionEigenPack<STAGIMPL,STAGIMPLF>, GIMPL, STAGIMPL>), MIO);
+#endif
 
 /******************************************************************************
  *                    TStagLoadEigenPack implementation                           *
@@ -135,6 +139,7 @@ void TStagLoadEigenPack<Pack, GImpl, FImpl>::setup(void)
         grid = envGetGrid(Field);//double storage so we can overwrite with v vector
     }else{
         grid = envGetRbGrid(Field);
+        gridIo = envGetRbGrid(FieldIo);
     }
     envCreateDerived(BasePack, Pack, getName(),
                      par().Ls, par().size,
