@@ -129,15 +129,8 @@ namespace EigenPackIo
                 }
                 binReader.open(fullFilename);
                 readHeader(record, binReader);
-                if(gridIo != nullptr){
-                  T temp(gridIo);// saving memomry since grid is full lattice vector
-                                 // need to use rb grid to read
-                  readElement(temp, eval[k], k, binReader, ioBuf.get());
-                  temp.Checkerboard() = Odd;
-                  setCheckerboard(evec[k],temp);
-                }else{
-                  readElement(evec[k], eval[k], k, binReader, ioBuf.get());
-                }
+                readElement(evec[k], eval[k], k, binReader, ioBuf.get());
+                
                 evec.shrink_to_fit();
                 binReader.close();
             }
