@@ -68,6 +68,7 @@ public:
                                     std::string, eigenPack,
                                     std::string, action,
                                     std::string, solver,
+                                    bool, precision,
                                     double, mass,
                                     int, inc,
                                     int, tinc);
@@ -193,8 +194,22 @@ void TStagMesonCCLoop<FImpl1, FImpl2>::execute(void)
     auto &solver  = envGet(Solver, par().solver);
     double mass = par().mass;
     std::vector<double> mlsq(epack.eval.size());
+
+    std::vector<double> evalD(Nl_); 
+    
+    if (par().precision){ 
+        for (int i = 0; i < epack.eval.size(); ++i) { 
+            
+            evalD[i] = static_cast<double>(epack.eval[i]);         
+        }
+    } 
+    else{ 
+        evalD = epack.eval;
+    } 
+    
+    LOG(Message) << "After precision change " << std::endl;
     for(int i=0;i<epack.eval.size();i++){
-        mlsq[i]=(epack.eval[i]-mass*mass) * mass;
+        mlsq[i]=(evalD-mass*mass) * mass;
     }
     DeflatedGuesser<FermionField> LLsub(epack.evec, mlsq);
     FermionField tmp_e(env().getRbGrid());
@@ -221,6 +236,7 @@ void TStagMesonCCLoop<FImpl1, FImpl2>::execute(void)
     envGetTmp(FermionField, source);
     envGetTmp(FermionField, sol);
     FermionField tmp(env().getRbGrid());
+
 
     Coordinate srcSite;
     ColourMatrix UmuSrc;
