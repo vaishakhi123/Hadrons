@@ -195,7 +195,7 @@ void TStagMesonCCLoop<FImpl1, FImpl2>::execute(void)
     double mass = par().mass;
     std::vector<double> mlsq(epack.eval.size());
 
-    std::vector<double> evalD(Nl_); 
+    std::vector<double> evalD(epack.eval.size()); 
     
     if (par().precision){ 
         for (int i = 0; i < epack.eval.size(); ++i) { 
@@ -209,7 +209,7 @@ void TStagMesonCCLoop<FImpl1, FImpl2>::execute(void)
     
     LOG(Message) << "After precision change " << std::endl;
     for(int i=0;i<epack.eval.size();i++){
-        mlsq[i]=(evalD-mass*mass) * mass;
+        mlsq[i]=(evalD[i]-mass*mass) * mass;
     }
     DeflatedGuesser<FermionField> LLsub(epack.evec, mlsq);
     FermionField tmp_e(env().getRbGrid());
