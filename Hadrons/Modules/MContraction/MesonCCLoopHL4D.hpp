@@ -366,9 +366,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
                     tmp2 = Cshift(tmp, mu, 1);
                     tmp = Umu[mu] * tmp2;
 
-                    tmp3 += tmp;
-                    LOG(Message) << "source "<< tmp3 << std::endl;
-                    
+                    tmp3 += tmp;     
                     solver(sol, tmp3);
 
                     // subtract the low modes
