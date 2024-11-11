@@ -297,7 +297,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
 
     // loop over time slice
     for(int its=0; its<nt;its+=tblock){
-        for (int ts=its; ts< its+tblock; ts++){
+        for (int ts=its; ts< its+tblock; ts=par().tinc){
             // loop over directions
             for(int mu=0;mu<3;mu++){
                 
@@ -320,7 +320,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
                     eval = conjugate(eval);
                 }
                 std::complex<double> iota_angle(0.0, std::arg(eval));
-                for (int ts=its; ts< its+tblock; ts++){
+                for (int ts=its; ts< its+tblock; ts=par().tinc){
     
                     // lopp over directions
                     for(int mu=0;mu<3;mu++){
