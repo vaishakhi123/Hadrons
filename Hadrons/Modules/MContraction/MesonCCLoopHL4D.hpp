@@ -341,7 +341,7 @@ void TStagMesonLoopCCHL4D<FImpl1, FImpl2>::execute(void)
             }
         }
         // loop over time slices
-        for (int ts=its; ts< its+tblock; ts++){
+        for (int ts=its; ts< its+tblock; ts+=par().tinc){
             
             LOG(Message) << "StagMesonLoopCCHLHL src_ts " << ts << std::endl;
             // loop over directions
